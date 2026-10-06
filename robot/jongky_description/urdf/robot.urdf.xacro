@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="jongky">
+
+  <!-- 이 파일이 launch에서 호출되는 입구.
+       실제 로봇 정의는 jongky.urdf.xacro 안에 있고,
+       여기서는 실행 시 바꿀 수 있는 인자의 기본값만 정한다.
+
+       예: ros2 launch ... cam_tilt_deg:=12
+       하면 파일을 안 고치고도 카메라 각도가 바뀐다. -->
+
+  <xacro:include filename="$(find jongky_description)/urdf/jongky.urdf.xacro"/>
+
+  <xacro:arg name="namespace"     default=""/>
+  <xacro:arg name="is_sim"        default="false"/>
+  <!-- 목업 하드웨어. 실물 없이 /cmd_vel -> /odom -> TF 를 돌려볼 때 true -->
+  <xacro:arg name="use_mock"      default="false"/>
+  <!-- 실물 모드에서 쓸 시리얼 포트. 가상 포트로 시험할 때 바꿔 넣는다 -->
+  <xacro:arg name="serial_port"   default="/dev/yahboom"/>
+  <xacro:arg name="cam_tilt_deg"  default="0"/>
+
+  <!-- 라이다 스캔 0도를 로봇 정면에 맞추는 값.
+
+       [실측 확정] 0 이다. 라이다 0도가 이미 로봇 정면을 향한다.
+       차분 스캔으로 검증했다 — 기준 스캔을 뜬 뒤 정면 20~30cm 에 물체를
+       놓고 다시 떠서, 거리가 줄어든 각도를 본다. 350~20도 구간이
+       일제히 30cm 대로 떨어졌다 (350도에서 3598 -> 310mm).
+
+       예전 기본값 180 은 "커넥터가 뒤를 향하니 뒤집어야 한다"는
+       전제였는데 이 로봇에는 맞지 않았다. 라이다 베이스의 ▼ 마커가
+       로봇 앞을 가리키는 것과도 일치한다.
+
+       재검증: tools/lidar_yaw.py (ROS 드라이버 없이 시리얼로 직접 잰다) -->
+  <xacro:arg name="laser_yaw_deg" default="0"/>
+
+  <!-- TOF는 근거리 바닥 감지용이다. 뎁스 카메라는 최소 측정거리(약 0.6m)
+       때문에 판 앞모서리 기준 540mm 안쪽 바닥을 못 보고, 라이다는 높이
+       252.75mm 수평면만 훑으므로 낮은 물체를 전혀 못 본다. 그 구멍을
+       메우는 게 TOF다.
+
+       pitch 25 → 판 앞모서리에서 223mm 앞 바닥을 찍는다.
+       yaw 5    → 로봇이 실제로 지나갈 경로를 훑는다.
+                  (예전 35도는 빔이 y=216까지 새어나가 로봇 폭 82.5
+                   바깥의, 밟지도 않을 바닥을 보고 있었다) -->
+  <xacro:arg name="tof_pitch_deg" default="25"/>
+  <xacro:arg name="tof_yaw_deg"   default="5"/>
+
+  <xacro:insert_robot namespace="$(arg namespace)"
+                      is_sim="$(arg is_sim)"
+                      use_mock="$(arg use_mock)"
+                      serial_port="$(arg serial_port)"
+                      cam_tilt_deg="$(arg cam_tilt_deg)"
+                      laser_yaw_deg="$(arg laser_yaw_deg)"
+                      tof_pitch_deg="$(arg tof_pitch_deg)"
+                      tof_yaw_deg="$(arg tof_yaw_deg)"/>
+</robot>

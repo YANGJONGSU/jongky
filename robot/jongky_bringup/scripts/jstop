@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# 컨테이너를 내린다. 로봇을 세우고 bag 을 정상적으로 닫는다.
+set -euo pipefail
+source "$(dirname "$(readlink -f "$0")")/_common.sh"
+
+if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+  echo "떠 있는 컨테이너가 없다"
+  exit 0
+fi
+
+# 1) 로봇을 세운다
+docker exec "$CONTAINER" bash -lc \
+  "$ROS_SETUP && timeout 3 ros2 topic pub --once /cmd_vel geometry_msgs/msg/TwistStamped '{}'" \
+  >/dev/null 2>&1 || true
+
+# 2) bag 을 SIGINT 로 닫는다.
+#    docker stop 은 PID 1 에만 신호를 보내므로, 그냥 내리면 bag 이 인덱스를
+#    쓰지 못하고 죽어 파일을 못 읽게 될 수 있다.
+if docker exec "$CONTAINER" pgrep -f "ros2 bag record" >/dev/null 2>&1; then
+  echo "bag 닫는 중..."
+  docker exec "$CONTAINER" pkill -INT -f "ros2 bag record" 2>/dev/null || true
+  # **넉넉히 기다려야 한다.** 20GB 짜리 bag 은 인덱스를 쓰는 데 수십 초가
+  # 걸린다. 예전에 15초 만에 SIGKILL 을 때렸다가 metadata.yaml 이 없는
+  # 반쪽짜리 bag 을 만들었다 — 데이터는 멀쩡한데 ros2 가 못 읽는 상태가 된다.
+  #
+  # 진행 여부는 bag 디렉터리 크기가 멈췄는지로 판단한다. 계속 커지고 있으면
+  # 아직 쓰는 중이므로 기다린다.
+  LAST_SIZE=""
+  for i in $(seq 1 120); do            # 최대 2분
+    docker exec "$CONTAINER" pgrep -f "ros2 bag record" >/dev/null 2>&1 || break
+    if [ $((i % 10)) = 0 ]; then
+      SIZE=$(du -sb "$HOME/bags" 2>/dev/null | cut -f1)
+      if [ "$SIZE" = "$LAST_SIZE" ]; then
+        echo "  (크기 변화 없음 — 마무리 대기 ${i}s)"
+      else
+        echo "  (인덱스 쓰는 중... ${i}s)"
+      fi
+      LAST_SIZE="$SIZE"
+    fi
+    sleep 1
+  done
+  if docker exec "$CONTAINER" pgrep -f "ros2 bag record" >/dev/null 2>&1; then
+    echo "  2분 지나도 안 끝난다 — 강제 종료 (bag 이 손상될 수 있다)"
+    docker exec "$CONTAINER" pkill -9 -f "ros2 bag record" 2>/dev/null || true
+    sleep 2
+  else
+    echo "  bag 정상 종료됨"
+  fi
+fi
+
+docker stop "$CONTAINER" >/dev/null
+
+# 컨테이너가 root 로 도는 탓에 bag 과 지도가 root 소유로 떨어진다.
+# 그대로 두면 옮기지도 지우지도 못한다 (sudo 없이는).
+for d in "$HOME/bags" "$HOME/jongky_ws/src/jongky_navigation/maps"; do
+  [ -d "$d" ] || continue
+  if find "$d" -user root -print -quit 2>/dev/null | grep -q .; then
+    sudo -n chown -R "$(id -u):$(id -g)" "$d" 2>/dev/null \
+      || echo "  소유권 정리에 sudo 가 필요하다:  sudo chown -R \$USER $d"
+  fi
+done
+
+echo "정리 완료. bag 은 ~/bags/ 에 있다"
